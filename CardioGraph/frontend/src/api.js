@@ -1,101 +1,84 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || '').trim().replace(/\/$/, '');
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000').trim().replace(/\/$/, '');
 
 export const isApiConfigured = Boolean(API_BASE);
 
 async function request(path, options = {}) {
-  const response = await fetch(`${API_BASE}${path}`, {
-    ...options,
-    headers: {
-      Accept: 'application/json',
-      ...(options.body ? { 'Content-Type': 'application/json' } : {}),
-      ...options.headers,
-    },
-  });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), 30000);
 
-  const body = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const message = body?.error?.message || body?.detail?.[0]?.msg || `Request failed (${response.status})`;
-    const error = new Error(message);
-    error.status = response.status;
-    error.requestId = body?.error?.request_id;
+  try {
+    const response = await fetch(`${API_BASE}${path}`, {
+      ...options,
+      signal: controller.signal,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        ...options.headers,
+      },
+    });
+    const body = await response.json().catch(() => null);
+
+    if (!response.ok) {
+      const detail = Array.isArray(body?.detail)
+        ? body.detail.map((item) => `${item.loc?.slice(-1)[0] || 'field'}: ${item.msg}`).join('; ')
+        : body?.detail || body?.message;
+      const error = new Error(detail || `Request failed (${response.status})`);
+      error.status = response.status;
+      throw error;
+    }
+    if (!body || typeof body !== 'object') {
+      throw new Error('The backend returned an invalid response.');
+    }
+    return body;
+  } catch (error) {
+    if (error.name === 'AbortError') throw new Error('The backend request timed out.');
+    if (error instanceof TypeError) throw new Error('The backend is offline or unavailable.');
     throw error;
+  } finally {
+    window.clearTimeout(timeout);
   }
-  return body;
+}
+
+function normalizePrediction(result, model) {
+  return {
+    model: model === 'graphsage' ? 'graphsage' : 'logistic_regression',
+    predicted_class: result.predicted_class,
+    probability: result.estimated_probability,
+    threshold: result.threshold,
+    disclaimer: result.disclaimer,
+  };
 }
 
 export async function createPrediction(patient, selectedModel = 'graphsage') {
-  if (!isApiConfigured) {
-    // Deliberately simulated preview: never present this as an actual model inference.
-    await new Promise((resolve) => setTimeout(resolve, 1000));
-    return {
-      mode: 'demo',
-      prediction_id: 'preview-8f24c1',
-      created_at: new Date().toISOString(),
-      status: 'completed',
-      selected_model: selectedModel,
-      predictions: [
-        {
-          model: 'graphsage',
-          probability: 0.72,
-          predicted_class: 1,
-          threshold: 0.5,
-          model_version: 'demo-preview',
-          note: 'Illustrative payload only — no trained model was called.',
-        },
-        {
-          model: 'logistic_regression',
-          probability: 0.61,
-          predicted_class: 1,
-          threshold: 0.5,
-          model_version: 'demo-preview',
-          note: 'Illustrative payload only — no trained model was called.',
-        },
-      ].filter((item) => selectedModel === 'compare' || item.model === selectedModel),
-      explanation: null,
-      dataset_label_note: 'Class 1 means disease recorded in the selected dataset; this is not a diagnosis.',
-      warnings: ['Preview mode: this result is simulated and not calculated from your input.'],
-      disclaimer: 'Educational research prototype only. Not clinically validated and not for medical decisions.',
-    };
-  }
+  const requests = selectedModel === 'compare'
+    ? [
+      request('/predict', { method: 'POST', body: JSON.stringify(patient) }).then((result) => normalizePrediction(result, 'logistic_regression')),
+      request('/predict/graphsage', { method: 'POST', body: JSON.stringify(patient) }).then((result) => normalizePrediction(result, 'graphsage')),
+    ]
+    : [
+      request(selectedModel === 'graphsage' ? '/predict/graphsage' : '/predict', {
+        method: 'POST',
+        body: JSON.stringify(patient),
+      }).then((result) => normalizePrediction(result, selectedModel)),
+    ];
 
-  return request('/predictions', {
+  const predictions = await Promise.all(requests);
+  return {
+    predictions,
+    disclaimer: predictions.map((item) => item.disclaimer).filter(Boolean)[0],
+  };
+}
+
+export function createExplanation(patient) {
+  return request('/explain', {
     method: 'POST',
-    body: JSON.stringify({ patient, selected_model: selectedModel, include_explanation: false }),
+    body: JSON.stringify(patient),
   });
 }
 
-export async function createExplanation(predictionId, question = 'Explain this research-model output and its limitations.') {
-  if (!isApiConfigured) {
-    await new Promise((resolve) => setTimeout(resolve, 650));
-    return {
-      mode: 'demo',
-      explanation_id: 'preview-explanation',
-      prediction_id: predictionId,
-      summary: 'This is a preview explanation. Connect the FastAPI service and an approved retrieval index to generate an evidence-grounded explanation for a real prediction.',
-      key_factors: [],
-      evidence: [],
-      limitations: ['The backend is not connected.', 'No knowledge retrieval or LLM call was made.'],
-      grounding_status: 'no_evidence',
-      disclaimer: 'Not a diagnosis. Consult a qualified healthcare professional for health concerns.',
-    };
-  }
-
-  return request('/explanations', {
+export function askQuestion(question) {
+  return request('/ask', {
     method: 'POST',
-    body: JSON.stringify({ prediction_id: predictionId, audience: 'student', question, evidence_limit: 4, include_sources: true }),
+    body: JSON.stringify({ question }),
   });
-}
-
-export async function getKnowledgeSources() {
-  if (!isApiConfigured) {
-    return {
-      mode: 'demo',
-      sources: [
-        { source_id: 'uci-heart-disease-doc', title: 'UCI Heart Disease dataset documentation', source_type: 'public_dataset', url: 'https://archive.ics.uci.edu/dataset/45/heart+disease', status: 'reference' },
-        { source_id: 'project-model-card', title: 'CardioGraph model card', source_type: 'project_document', url: null, status: 'local' },
-        { source_id: 'evidence-index', title: 'Approved clinical evidence index', source_type: 'knowledge_index', url: null, status: 'not-connected' },
-      ],
-    };
-  }
-  return request('/knowledge/sources');
 }

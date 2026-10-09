@@ -9,7 +9,7 @@ import {
   TrendingUp, Waves, X, Zap,
 } from 'lucide-react';
 import NeuralScene from './components/NeuralScene.jsx';
-import { createExplanation, createPrediction, getKnowledgeSources, isApiConfigured } from './api.js';
+import { askQuestion, createExplanation, createPrediction, isApiConfigured } from './api.js';
 
 const reportedMetrics = {
   graphsage: { accuracy: 86.69, precision: 79.02, recall: 95.76, f1: 86.59, auc: 92.38, profileAccuracy: 83.22, profilePrecision: 75.00, profileRecall: 95.65, profileF1: 84.08, profileAuc: 90.69 },
@@ -17,17 +17,17 @@ const reportedMetrics = {
 };
 
 const fields = [
-  { name: 'age', label: 'Age', type: 'number', unit: 'years', min: 18, max: 100, required: true, help: 'Age in years' },
+  { name: 'age', label: 'Age', type: 'number', unit: 'years', min: 1, max: 120, required: true, help: 'Age in years' },
   { name: 'sex', label: 'Sex code', type: 'select', required: true, options: [['1', '1 · Dataset code'], ['0', '0 · Dataset code']], help: 'Use the codebook for the chosen dataset.' },
   { name: 'cp', label: 'Chest-pain category', type: 'select', required: true, options: [['1', '1 · Category'], ['2', '2 · Category'], ['3', '3 · Category'], ['4', '4 · Category']], help: 'Dataset-coded category, not a severity scale.' },
-  { name: 'trestbps', label: 'Resting blood pressure', type: 'number', unit: 'mmHg*', min: 50, max: 300, help: 'Leave blank if unknown.' },
-  { name: 'chol', label: 'Serum cholesterol', type: 'number', unit: 'mg/dL*', min: 50, max: 800, help: 'Leave blank if unknown.' },
-  { name: 'fbs', label: 'Fasting blood sugar', type: 'selectNullable', options: [['0', '0 · No'], ['1', '1 · Yes']], help: 'Optional dataset-coded indicator.' },
-  { name: 'restecg', label: 'Resting ECG', type: 'selectNullable', options: [['0', '0 · Category'], ['1', '1 · Category'], ['2', '2 · Category']], help: 'Dataset-coded category.' },
-  { name: 'thalach', label: 'Maximum heart rate', type: 'number', unit: 'bpm*', min: 30, max: 250, help: 'Leave blank if unknown.' },
-  { name: 'exang', label: 'Exercise-induced angina', type: 'selectNullable', options: [['0', '0 · No'], ['1', '1 · Yes']], help: 'Dataset-coded indicator.' },
-  { name: 'oldpeak', label: 'Oldpeak', type: 'number', unit: 'source value', min: -5, max: 10, step: 0.1, help: 'Preserve the source definition.' },
-  { name: 'slope', label: 'Slope category', type: 'selectNullable', options: [['1', '1 · Category'], ['2', '2 · Category'], ['3', '3 · Category']], help: 'Codes are from the retained-source experiment.' },
+  { name: 'trestbps', label: 'Resting blood pressure', type: 'number', unit: 'mmHg', min: 1, max: 300, required: true, help: 'Required dataset value.' },
+  { name: 'chol', label: 'Serum cholesterol', type: 'number', unit: 'mg/dL', min: 1, max: 1000, required: true, help: 'Required dataset value.' },
+  { name: 'fbs', label: 'Fasting blood sugar', type: 'select', required: true, options: [['0', '0 · No'], ['1', '1 · Yes']], help: 'Dataset-coded indicator.' },
+  { name: 'restecg', label: 'Resting ECG', type: 'select', required: true, options: [['0', '0 · Category'], ['1', '1 · Category'], ['2', '2 · Category']], help: 'Dataset-coded category.' },
+  { name: 'thalach', label: 'Maximum heart rate', type: 'number', unit: 'bpm', min: 1, max: 300, required: true, help: 'Required dataset value.' },
+  { name: 'exang', label: 'Exercise-induced angina', type: 'select', required: true, options: [['0', '0 · No'], ['1', '1 · Yes']], help: 'Dataset-coded indicator.' },
+  { name: 'oldpeak', label: 'Oldpeak', type: 'number', unit: 'source value', min: -10, max: 15, step: 0.1, required: true, help: 'Preserve the source definition.' },
+  { name: 'slope', label: 'Slope category', type: 'select', required: true, options: [['1', '1 · Category'], ['2', '2 · Category'], ['3', '3 · Category']], help: 'Codes are from the retained-source experiment.' },
 ];
 
 const samplePatient = {
