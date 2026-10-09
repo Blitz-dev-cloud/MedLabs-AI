@@ -1,0 +1,399 @@
+openapi: 3.1.0
+info:
+  title: CardioGraph Risk Analysis API
+  version: 1.0.0
+  summary: Research-prototype API for tabular heart-disease classification and evidence-grounded explanations.
+  description: >-
+    API contract for the CardioGraph course project. The predictor is an educational research prototype,
+    not a clinically validated diagnostic device. Do not use it for medical decisions. The current model
+    schema uses 11 features; ca and thal are intentionally excluded from the current experiment.
+servers:
+  - url: http://localhost:8000/api/v1
+    description: Local FastAPI development server
+security: []
+tags:
+  - name: Health
+  - name: Predictions
+  - name: Explanations
+  - name: Knowledge
+  - name: Feedback
+paths:
+  /health/live:
+    get:
+      tags: [Health]
+      operationId: livenessCheck
+      summary: Liveness probe
+      responses:
+        '200':
+          description: Process is running.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HealthResponse' }
+              example: { status: ok, service: cardiograph-api, version: '1.0.0' }
+  /health/ready:
+    get:
+      tags: [Health]
+      operationId: readinessCheck
+      summary: Readiness probe for loaded artifacts and required services
+      responses:
+        '200':
+          description: Service is ready.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReadinessResponse' }
+        '503':
+          description: One or more required components are unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /models:
+    get:
+      tags: [Predictions]
+      operationId: listModels
+      summary: Return available models and the current feature contract
+      responses:
+        '200':
+          description: Model metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ModelsResponse' }
+  /predictions:
+    post:
+      tags: [Predictions]
+      operationId: createPrediction
+      summary: Score a patient feature record
+      description: >-
+        Runs one or more configured models. Source/dataset identity is intentionally not accepted as a patient
+        feature. Missing nullable fields are handled by the fitted training preprocessor. A response probability
+        is model output for the dataset's binary label, not a clinically calibrated risk estimate.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PredictionRequest' }
+            example:
+              patient:
+                age: 54
+                sex: 1
+                cp: 4
+                trestbps: 130
+                chol: 239
+                fbs: 0
+                restecg: 0
+                thalach: 150
+                exang: 0
+                oldpeak: 0.8
+                slope: 2
+              selected_model: graphsage
+              include_explanation: false
+      responses:
+        '200':
+          description: Prediction completed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PredictionResponse' }
+        '422':
+          description: Input validation failed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationErrorResponse' }
+        '503':
+          description: Selected model artifact is unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /predictions/{prediction_id}:
+    get:
+      tags: [Predictions]
+      operationId: getPrediction
+      summary: Retrieve a stored prediction when persistence is enabled
+      parameters:
+        - name: prediction_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Stored prediction metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PredictionResponse' }
+        '404':
+          description: Prediction not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /explanations:
+    post:
+      tags: [Explanations]
+      operationId: createExplanation
+      summary: Generate an evidence-grounded explanation for a prediction
+      description: >-
+        Retrieves approved knowledge snippets and asks the configured LLM to explain the model output. The service
+        must disclose uncertainty, cite retrieved evidence, and must not diagnose, prescribe, or invent unsupported facts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ExplanationRequest' }
+            example:
+              prediction_id: 81fcecc2-2a02-4e4f-9cda-f7a4c2bfad91
+              audience: student
+              question: Explain which input fields contributed to this model result.
+              evidence_limit: 4
+      responses:
+        '200':
+          description: Explanation generated with evidence references.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ExplanationResponse' }
+        '404':
+          description: Prediction or evidence record not found.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+        '503':
+          description: Retriever or language model unavailable.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorResponse' }
+  /knowledge/sources:
+    get:
+      tags: [Knowledge]
+      operationId: listKnowledgeSources
+      summary: List approved knowledge sources configured for retrieval
+      responses:
+        '200':
+          description: Source catalog.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/KnowledgeSourcesResponse' }
+  /feedback:
+    post:
+      tags: [Feedback]
+      operationId: submitFeedback
+      summary: Submit optional feedback about an explanation or interface result
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FeedbackRequest' }
+      responses:
+        '201':
+          description: Feedback accepted.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FeedbackResponse' }
+        '422':
+          description: Invalid feedback payload.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ValidationErrorResponse' }
+components:
+  schemas:
+    HealthResponse:
+      type: object
+      required: [status, service, version]
+      properties:
+        status: { type: string, const: ok }
+        service: { type: string, example: cardiograph-api }
+        version: { type: string, example: '1.0.0' }
+    ReadinessResponse:
+      type: object
+      required: [status, components]
+      properties:
+        status: { type: string, enum: [ready, degraded] }
+        components:
+          type: object
+          additionalProperties: { type: string, enum: [ready, unavailable, disabled] }
+    ModelsResponse:
+      type: object
+      required: [default_model, models, features, excluded_features]
+      properties:
+        default_model:
+          type: string
+          enum: [graphsage, logistic_regression]
+          default: graphsage
+        models:
+          type: array
+          items:
+            type: object
+            required: [name, version, available]
+            properties:
+              name:
+                type: string
+                enum: [graphsage, logistic_regression]
+              version: { type: string }
+              available: { type: boolean }
+        features:
+          type: array
+          items: { type: string }
+        excluded_features:
+          type: array
+          items: { type: string }
+    PatientFeatures:
+      type: object
+      additionalProperties: false
+      required: [age, sex, cp]
+      properties:
+        age: { type: integer, minimum: 18, maximum: 100, description: Age in years. }
+        sex: { type: integer, enum: [0, 1], description: Dataset-coded sex indicator; use the dataset's codebook. }
+        cp: { type: integer, enum: [1, 2, 3, 4], description: Dataset-coded chest-pain category. }
+        trestbps: { type: [number, 'null'], minimum: 50, maximum: 300, description: Resting blood pressure; units and source codebook must be preserved. }
+        chol: { type: [number, 'null'], minimum: 50, maximum: 800, description: Serum cholesterol as stored in source data. }
+        fbs: { type: [integer, 'null'], enum: [0, 1, null], description: Dataset-coded fasting blood sugar indicator. }
+        restecg: { type: [integer, 'null'], enum: [0, 1, 2, null], description: Dataset-coded resting ECG category. }
+        thalach: { type: [number, 'null'], minimum: 30, maximum: 250, description: Maximum heart rate achieved. }
+        exang: { type: [integer, 'null'], enum: [0, 1, null], description: Dataset-coded exercise-induced angina indicator. }
+        oldpeak: { type: [number, 'null'], minimum: -5, maximum: 10, description: ST depression field as represented in the selected dataset. }
+        slope: { type: [integer, 'null'], enum: [1, 2, 3, null], description: Dataset-coded slope category for the retained-source model. }
+      example:
+        age: 54
+        sex: 1
+        cp: 4
+        trestbps: 130
+        chol: 239
+        fbs: 0
+        restecg: 0
+        thalach: 150
+        exang: 0
+        oldpeak: 0.8
+        slope: 2
+    PredictionRequest:
+      type: object
+      additionalProperties: false
+      required: [patient]
+      properties:
+        patient: { $ref: '#/components/schemas/PatientFeatures' }
+        selected_model:
+          type: string
+          enum: [graphsage, logistic_regression, compare]
+          default: graphsage
+        include_explanation: { type: boolean, default: false }
+        request_explanation_audience: { type: string, enum: [student, general], default: student }
+    ModelPrediction:
+      type: object
+      required: [model, probability, predicted_class, threshold, model_version]
+      properties:
+        model: { type: string, enum: [graphsage, logistic_regression] }
+        probability: { type: number, minimum: 0, maximum: 1, description: Model score for dataset target=1; not necessarily calibrated. }
+        predicted_class: { type: integer, enum: [0, 1] }
+        threshold: { type: number, minimum: 0, maximum: 1, default: 0.5 }
+        model_version: { type: string }
+        note: { type: string }
+    PredictionResponse:
+      type: object
+      required: [prediction_id, created_at, status, selected_model, predictions, dataset_label_note, disclaimer]
+      properties:
+        prediction_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        status: { type: string, enum: [completed, partial] }
+        selected_model: { type: string, enum: [graphsage, logistic_regression, compare] }
+        predictions:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/ModelPrediction' }
+        explanation: { oneOf: [{ $ref: '#/components/schemas/ExplanationResponse' }, { type: 'null' }] }
+        dataset_label_note: { type: string, example: 'Class 1 means the dataset recorded disease; this is not a clinical diagnosis.' }
+        warnings:
+          type: array
+          items: { type: string }
+        disclaimer: { type: string }
+    EvidenceItem:
+      type: object
+      required: [source_id, title, snippet]
+      properties:
+        source_id: { type: string }
+        title: { type: string }
+        url: { type: [string, 'null'], format: uri }
+        snippet: { type: string, maxLength: 1200 }
+        published_at: { type: [string, 'null'], format: date }
+    ExplanationRequest:
+      type: object
+      additionalProperties: false
+      required: [prediction_id]
+      properties:
+        prediction_id: { type: string, format: uuid }
+        audience: { type: string, enum: [student, general], default: student }
+        question: { type: [string, 'null'], maxLength: 1000 }
+        evidence_limit: { type: integer, minimum: 1, maximum: 8, default: 4 }
+        include_sources: { type: boolean, default: true }
+    ExplanationResponse:
+      type: object
+      required: [explanation_id, prediction_id, summary, key_factors, evidence, limitations, disclaimer, grounding_status]
+      properties:
+        explanation_id: { type: string, format: uuid }
+        prediction_id: { type: string, format: uuid }
+        summary: { type: string, maxLength: 3000 }
+        key_factors:
+          type: array
+          items:
+            type: object
+            required: [feature, direction, description]
+            properties:
+              feature: { type: string }
+              direction: { type: string, enum: [increasing_score, decreasing_score, uncertain, not_available] }
+              description: { type: string }
+        evidence:
+          type: array
+          items: { $ref: '#/components/schemas/EvidenceItem' }
+        limitations:
+          type: array
+          items: { type: string }
+        grounding_status: { type: string, enum: [grounded, partially_grounded, no_evidence] }
+        disclaimer: { type: string }
+    KnowledgeSource:
+      type: object
+      required: [source_id, title, source_type, status]
+      properties:
+        source_id: { type: string }
+        title: { type: string }
+        source_type: { type: string, enum: [guideline, public_dataset, paper, institutional_page, glossary] }
+        url: { type: [string, 'null'], format: uri }
+        status: { type: string, enum: [active, pending_review, disabled] }
+        last_ingested_at: { type: [string, 'null'], format: date-time }
+    KnowledgeSourcesResponse:
+      type: object
+      required: [sources]
+      properties:
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/KnowledgeSource' }
+    FeedbackRequest:
+      type: object
+      additionalProperties: false
+      required: [prediction_id, helpful]
+      properties:
+        prediction_id: { type: string, format: uuid }
+        helpful: { type: boolean }
+        comment: { type: [string, 'null'], maxLength: 1000 }
+        category: { type: [string, 'null'], enum: [clarity, source_quality, technical_issue, other, null] }
+    FeedbackResponse:
+      type: object
+      required: [feedback_id, status]
+      properties:
+        feedback_id: { type: string, format: uuid }
+        status: { type: string, const: received }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message, request_id]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            request_id: { type: string }
+            details: { type: object, additionalProperties: true }
+    ValidationErrorResponse:
+      type: object
+      properties:
+        detail:
+          type: array
+          items:
+            type: object
+            properties:
+              loc: { type: array, items: { type: [string, integer] } }
+              msg: { type: string }
+              type: { type: string }
